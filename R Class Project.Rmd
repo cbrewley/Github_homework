@@ -1,0 +1,234 @@
+---
+title: "R Class Project"
+author: "Creightanya Brewley"
+date: "2022-12-01"
+header-includes:
+  - \usepackage{placeins}
+output: pdf_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, cache = FALSE)
+library(tidyverse)
+library(lme4)
+knitr::knit_hooks$set(plot = function(x, options)  {
+  paste0(knitr::hook_plot_tex(x, options), "\n\\FloatBarrier\n")
+})
+```
+
+# Introduction
+
+Few published surveys for amphibians have been conducted within the British Virgin Islands (BVI) spanning from the 1930s to the early 2000s (Grant 1932; Heatwole et al. 1981; Lazell 1983; Ovaska et al. 2000). As a result of these surveys, at least 4 frog species are known to be native to the BVI. While all four species are believed to be declining within the territory (Perry & Gerber, 2006), only *Eleutherodactylus schwartzi* or the Virgin Islands Coqui is considered to be an endangered endemic (IUCN SSC Amphibian Specialist Group, 2020). 
+
+![Eleutherodactylus schwartzi](frog.jpg)
+
+\pagebreak
+
+
+
+
+My research involves using passive acoustic monitoring to determine the presence or absence of *Eleutherodactylus schwartzi* and co-occuring frog species at key sites in the BVI. These key survey sites vary in terms of vegetation type, which has implications for survey design since different types of vegetation attenuate sound differently (Fricke 1984). The purpose of this short data analysis project is to investigate how far away the advertisement vocalisations of *Eleutherodactylus schwartizi* can be detected on the available acoustic recording devices in different types of vegetation. This information will help inform how far recording devices will be spaced from each other in my surveys to prevent sampling area overlap. 
+
+
+The types of vegetation I tested the vocalisations in were 1) a control plot with no vegetation), 2) drought deciduous forest, 3) upland evergreen forest, and 4) coastal thicket. The acoustic recorders used for these tests were those available to me for use in passive acoustic monitoring surveys, namely a SongMeter Mini, an AudioMoth enclosed in a improvised case, and an AudioMoth without a case. 
+
+![Acoustic recorders secured to a tree. From top to bottom: SongMeter, AudioMoth(no case), AudioMoth(case)](recorders.jpg)
+
+\newpage
+
+
+
+To measure detectability of the signals at different distances, I played the advertisement calls of *E. schwartzi* from a speaker at approximately the same amplitude as natural calls from 1m-50m away from the acoustic recorders. I then visualised the resulting audio recordings as spectrograms in Raven Pro acoustic software and determined the signal-to-noise (SNR) ratios of the calls. Signal-to noise ratio is a measure of signal quality, and I considered a SNR of 15dB to be the threshold of verifiable detection. I obtained SNR values both via manual procedure as well as via Raven Pro's automatic "SNR NIST Quick" measurement. The SNR of two individual advertisement signals were averaged for each data point.
+
+![Spectrogram of E. schwartzi's advertisement call visualised in Raven Pro acoustic software](frog call.png)
+\pagebreak
+
+
+
+# Data Analysis Methods
+
+```{r loading the necessary packages, echo=FALSE, message=FALSE, warning=FALSE, error=FALSE, results='hide'}
+library(dplyr)
+library(tidyr)
+
+library(ggplot2)
+library(patchwork) # To display 2 charts together
+library(hrbrthemes)
+install.packages('repr', repos = "http://cran.us.r-project.org")
+library(repr)
+```
+Raven Pro software allows users to measure and record some features of acoustic data in a text file table known as a "selection table". I first imported the 10 selection table files containing relevant signal measurements from the advertisement call recordings on the three acoustic devices.
+
+
+```{r load files in, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE, results='hide'}
+
+#This is the initial quality test I did on the audiomoths by playing synthetic tones. I measured the root mean squared amplitude of the 2kHz and 4kHz tones because those frequencies roughly correspond to the dominant frequencies of the target call of the target species. This table should be cleaned by consolidating the waveform and spectrogram information into a single row.
+qtest<- read.delim("audiomoth_quality_test.txt", header=TRUE, stringsAsFactors=TRUE)
+
+ctrlmoth<- read.delim("beefisland_salt_flat_am46sdx_range_test_22aug22.txt", header = TRUE, stringsAsFactors = TRUE)
+ctrlcase<- read.delim("beefisland_salt_flat_am38sdnew_range_test_22aug22.txt", header = TRUE, stringsAsFactors = TRUE)
+ctrlsm<-read.delim("beefisland_salt_flat_mini4sds_range_test_22aug22.txt", header = TRUE, stringsAsFactors = TRUE)
+
+thickmoth<- read.delim("mtalma_bushes_am46sdx_range_test_22aug22.txt", header = TRUE, stringsAsFactors = TRUE)
+thickcase<- read.delim("mtalma_bushes_am38sdnew_range_test_22aug22.txt", header = TRUE, stringsAsFactors = TRUE)
+thicksm<- read.delim("mtalma_bushes_mini4sds_range_test_22aug22.txt", header = TRUE, stringsAsFactors = TRUE)
+
+sagemoth<- read.delim("sagemountain_am46sdx_range_test_23aug22.txt", header = TRUE, stringsAsFactors = TRUE)
+sagecase<- read.delim("sagemountain_am38sdnew_range_test_23aug22.txt", header = TRUE, stringsAsFactors = TRUE)
+sagesm<-read.delim("sagemountain_mini4sds_range_test_23aug22.txt", header = TRUE, stringsAsFactors = TRUE)
+
+capecase<-read.delim("cape_wright_am38sdnew_range_test_19aug22.txt", header = TRUE, stringsAsFactors = TRUE)
+
+```
+
+Then, I conducted preliminary data cleaning to rename column headings and data values, remove extraneous columns and rows, and join the separate selection tables into a single dataframe.
+```{r data cleaning, echo=FALSE, message=FALSE, error=FALSE, warning=FALSE, results='hide'}
+#clean up quality test data by consolidating the waveform and spectrogram data for each device into a single row, deleting unneeded columns and rows, renaming the remaining columns, and converting file names to device names.
+qtest_clean<- qtest%>%
+  fill(RMS.Amp..U., .direction = c("down")) %>% 
+  filter(View=="Spectrogram 1") %>% 
+  select(Selection, device=Begin.File, freq_hz=Peak.Freq..Hz., rms_amp_u= RMS.Amp..U.)%>%  
+  mutate(device= gsub("\\..*", "", device))
+
+# Remove the RMS Amplitude column from two files
+
+thickmoth<- thickmoth[-c(10)]
+thicksm<- thicksm[-c(10)]
+
+# Join all sound test files together
+alltests<-bind_rows(list(ctrlcase, ctrlmoth, ctrlsm, sagecase, sagemoth, sagesm, thickcase, thickmoth, thicksm, capecase), .id = "list")
+ 
+#Rename useful fields and remove irrelevant fields
+alltests<-rename(alltests, snr_nist_quick_db=SNR.NIST.Quick..dB., inband_pow_db=Inband.Power..dB.FS., selection=Selection) 
+alltests<-alltests[-c(3,4,5,6,7,8)]
+alltests$sound_type=tolower(alltests$sound_type)
+
+#rename some of the data in the dataframe for consolidation and clarity
+install.packages("forcats", repos = "http://cran.us.r-project.org")
+library(forcats)
+
+alltests<-alltests %>% 
+mutate(location=fct_collapse(location, `mount alma bushes`=c("mount alma bushes", "mt alma bushes")))
+
+alltests<-alltests %>% 
+mutate(device_name=fct_collapse(device_name, `AudioMoth(case)`="AM38SDNEW", `AudioMoth(no case)`="AM46SDX",`SongMeter`=c("MINI4SDS", "MINI4")))
+ 
+```
+With all the data in a single table, I proceeded to create new columns in which to manually calculate and store the signal-to-noise ratios for each measured signal. The steps to calculating SNR manually are as follows: 1) Measure and record (in Raven Pro spectrogram view) the inband power of desired signals along with an adjacent area of undesired noise, 2) convert the unit of inband power from the logarithmic decibel scale to linear scale, 3) use the formula ***(signal-noise)/noise*** to calculate signal-to-noise ratio in linear units, 4) convert linear SNR units back to logarithmic decibels.
+
+```{r calculate signal to noise ratio, echo=FALSE, message=FALSE, warning=FALSE, error=FALSE, results='hide'}
+# Convert power from dB to linear units
+alltests<-mutate(alltests, inband_pow_u=10^(inband_pow_db/10))
+
+# Add empty column for linear signal:noise ratio (snr_u)
+alltests['snr_u'] <- 0
+
+# Calculate and fill the SNR
+for(i in 1:nrow(alltests)){
+   alltests$snr_u[i]<-(alltests$inband_pow_u[i]-alltests$inband_pow_u[i+1])/alltests$inband_pow_u[i+1]
+}
+
+# Convert SNR from linear units to dB (snr_db)
+alltests<-mutate(alltests, snr_db=10*log10(snr_u))
+
+```
+
+At each distance for each recording device, two manual and two automatic SNR values were represented. The averages were calculated and store in a new table so that each sample point was represented by an average manual SNR value and an average automatic SNR value. These average values were then separated into different tables by vegetation type (in coastal thicket vegetation, data for only one acoustic recorder is available). These tables were used to create plots of SNR vs distance (see results below).   
+
+```{r prep average signal to noise ration for plots, echo=FALSE, message=FALSE, warning=FALSE, error=FALSE, results='hide'}
+# Prepare average SNR data for plots
+SNRdata<- filter(alltests, sound_type=="signal")
+
+SNRavg<-group_by(SNRdata, location, device_name, distance_m) %>% 
+summarise(mean(snr_db), mean(snr_nist_quick_db))
+View(SNRavg)
+
+saltflat<-filter(SNRavg, location=='beef island salt flat')
+mtalma<-filter(SNRavg, location=='mount alma bushes')
+sagemt<-filter(SNRavg, location=='sage mountain')
+capew<-filter(SNRavg, location=='Cape Wright')
+
+```
+
+# Results
+
+Overall, we found that the manual SNR measurements and automatic SNR measurements differed from each other substantially. In the control plot with no vegetation, the manual SNR measurements indicated that *E. schwartzi* advertisement calls were detectable for all types of acoustic recorders at distances from 10m-50m, but not at 1m (fig. 1). In contrast, the automatic SNR measurement indicated that advertisement calls were detectable at all distances by all acoustic recorders. 
+
+```{r plot for control, echo=FALSE, results='markup', warning=FALSE, error=FALSE, message=FALSE, fig.cap="Signal-to-noise ratio of advertisement calls over distance in a control plot with no vegetation.", fig.width=9}
+#Plot the data
+
+p1<-ggplot(data=saltflat, aes(x=distance_m, y=`mean(snr_db)`, color=device_name))+geom_line()+theme(legend.position="none")+labs(x="distance (m)", y="SNR (manual)")
+p2<-ggplot(data=saltflat, aes(x=distance_m, y=`mean(snr_nist_quick_db)`, color=device_name))+geom_line()+labs(x="distance (m)", y=" SNR (auto-measure)", colour="Device name")
+p1+p2
+
+```
+\pagebreak
+
+
+
+
+In the drought deciduous forest plot the advertisement signal was detectable from 10m-45m on all devices based on manual SNR measurements, but detectable from 1m-45m on all devices . 
+
+```{r plot for drought deciduous, echo=FALSE, results='markup', warning=FALSE, error=FALSE, message=FALSE, fig.cap="Signal-to-noise ratio of advertisement calls over distance in drought deciduous forest", fig.width=9}
+#Plot the data
+p3<-ggplot(data=mtalma, aes(x=distance_m, y=`mean(snr_db)`, color=device_name))+geom_line()+theme(legend.position="none")+labs(x="distance (m)", y="SNR (manual)")
+p4<-ggplot(data=mtalma, aes(x=distance_m, y=`mean(snr_nist_quick_db)`, color=device_name))+geom_line()+labs(x="distance (m)", y=" SNR (auto-measure)", colour="Device name")
+p3+p4
+```
+\pagebreak
+
+
+
+In the upland evergreen forest, advertisement signals were detectable on all devices from 10m-35m based on manual SNR calculations, but from approximately 1m-45m based on the automatic measurement.
+
+```{r plot for upland evergreen, echo=FALSE, results='markup', warning=FALSE, error=FALSE, message=FALSE, fig.cap="Signal-to-noise ratio of advertisement calls over distance in upland evergreen forest", fig.width=9}
+
+p5<-ggplot(data=sagemt, aes(x=distance_m, y=`mean(snr_db)`, color=device_name))+geom_line()+theme(legend.position="none")+labs(x="distance (m)", y="SNR (manual)")
+p6<-ggplot(data=sagemt, aes(x=distance_m, y=`mean(snr_nist_quick_db)`, color=device_name))+geom_line()+labs(x="distance (m)", y=" SNR (auto-measure)", colour="Device name") 
+p5+p6
+
+```
+\pagebreak
+
+
+
+
+In the coastal thicket plot, only one acoustic recorder (the encased audiomoth) was tested. Both manual and automatic SNR measurements indicated that the signals were detectable from 1m to around 25m. 
+
+```{r plot coastal thicket, echo=FALSE, results='markup', warning=FALSE, error=FALSE, message=FALSE, fig.cap="Signal-to-noise ratio of advertisement calls over distance in coastal thicket vegetation", fig.width=9}
+p7<-ggplot(data=capew, aes(x=distance_m, y=`mean(snr_db)`, color=device_name))+geom_line()+theme(legend.position="none")+labs(x="distance (m)", y="SNR (manual)")
+p8<-ggplot(data=capew, aes(x=distance_m, y=`mean(snr_nist_quick_db)`, color=device_name))+geom_line()+labs(x="distance (m)", y=" SNR (auto-measure)", colour="Device name") 
+p7+p8
+
+```
+\pagebreak
+
+
+
+
+# Discussion
+
+The principal aim of this data analysis exercise was to determine the distance at which the advertisement calls of *E. schwartzi* were detectable by the acoustic recorders used in my research in different types of vegetation. I used two different measurements of signal-to-noise ratio, one calculated manually and one calculated automatically in Raven Pro acoustical software. These two measurements did not agree as much as had been expected, with the manual measurements appearing to be the less accurate of the two due to the unusual signal degradation trends seen in the first panel of figure 1.
+
+In general, the automatic SNR measurements indicated higher signal to noise ratios and thus greater detection distances than the manually calculated measurements. Based on the automatic measures, the signals were detectable to all devices in the control plots from 50m away, in the drought deciduous forest from around 45m away, in the upland evergreen forest from around 40m away, and in coastal thicket from around 20m away. While there was variability in detection performance between recorder types, the trends revealed by the automatic SNR measurements were often similar. However, because each data point represents the average of just 2 SNR measurements, a larger sample size will be required to make statistically valid comparisons about detection between devices.
+
+In addition to larger sample sizes for more statistical power, further investigation must be done to explain why the manual and automatic SNR values differed to the extent that they did, and determine which set of values was more accurate. In any case, visual inspection of the spectrograms support my findings that signals were significantly degraded at 50m in drought deciduous and upland evergreen forest, while signals degraded more quickly in coastal thicket vegetation. Nevertheless, well-degraded signals are sometimes still recognisable to well-trained human eyes and ears regardless of if the signals actually fall below an SNR of 15dB, therefore it may be prudent in my research to space recorders more than 50 m apart within vegetated plot to ensure no overlap of sampling ranges.
+
+
+# Bibliography
+
+Fricke, F. 1984. Sound attenuation in forests. Journal of Sound and Vibration 92:149–158.
+
+Grant, C. (1932). Herpetology of Tortola; Notes on Anegada and Virgin Gorda, British Virgin Islands. The Journal of Agriculture of the University of Puerto Rico, 16(3), 339–346. https://doi.org/10.46429/jaupr.v16i3.15054
+
+Heatwole, H., Levins, R., & Byer, M. D. (1981). Biogeography of the Puerto Rican Bank. Atoll Research Bulletin, 251, 1–55. https://doi.org/10.5479/si.00775630.251.1
+
+IUCN SSC Amphibian Specialist Group (IUCN Ssc). (2020, August 25). IUCN Red List of Threatened Species: Eleutherodactylus schwartzi. IUCN Red List of Threatened Species. https://www.iucnredlist.org/en
+
+Lazell, J. D. (1983). Biogeography of the herpetofauna of the British Virgin Islands, with description of a new anole (Sauria: Iguanidae). Advances in Herpetology and Evolutionary Biology : Essays in Honor of Ernest E. Williams, 1, 99–117.
+
+Ovaska, K. E., Caldbeck, J., & Lazell, J. (2000). New records and distributional and ecological notes of Leptodactylid frogs, Leptodactylus and Eleutherodactylus in the British Virgin Islands. Brevoria, 508(508), 1–25.
+
+Perry, G., & Gerber, G. P. (2006). Conservation of amphibians and reptiles in the British Virgin Islands: Status and patterns. Applied Herpetology, 3, 237–256.
+
+
+
